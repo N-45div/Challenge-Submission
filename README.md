@@ -7,8 +7,8 @@ Gobblecube AI Builder take-home.
 
 | Evaluation | Composite | Intent term | Trajectory term | BCE | ADE |
 |---|---:|---:|---:|---:|---:|
-| Local 5k Dev sample, `python grade.py` | **0.7203** | 0.844 | 0.597 | 0.2100 | 29.7 px |
-| Full Dev, printed by `python baseline.py` | **0.7253** | 0.861 | 0.590 | 0.2142 | 29.4 px |
+| Local 5k Dev sample, `python grade.py` | **0.7192** | 0.843 | 0.596 | 0.2097 | 29.7 px |
+| Full Dev | **0.7244** | 0.861 | 0.588 | 0.2141 | 29.3 px |
 
 The starter baseline scored `0.8311` on the same local 5k Dev grader run in
 this environment. Lower is better.
@@ -41,7 +41,7 @@ Full Dev trajectory ADE by horizon:
 | +0.5s | 10.1 px | 7.4 px |
 | +1.0s | 23.6 px | 17.1 px |
 | +1.5s | 47.3 px | 34.9 px |
-| +2.0s | 77.3 px | 58.1 px |
+| +2.0s | 77.3 px | 57.9 px |
 
 Most of the score gain comes from the long-horizon residual trajectory models.
 
@@ -59,7 +59,7 @@ docker run --rm -v "$(pwd)/data:/work" my-crossing /work/dev.parquet /work/preds
 Expected checks:
 
 ```text
-python grade.py      -> Score: 0.7203
+python grade.py      -> Score: 0.7192
 python -m pytest     -> 8 passed
 docker image size    -> about 1.31 GB
 ```

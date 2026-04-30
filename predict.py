@@ -184,6 +184,10 @@ def predict(request: dict) -> dict:
     intent_feats = _intent_features(request).reshape(1, -1)
 
     intent_prob = float(model["intent"].predict_proba(intent_feats)[0, 1])
+    if "intent_logit_bias" in model:
+        p = float(np.clip(intent_prob, 1e-6, 1.0 - 1e-6))
+        logit = np.log(p / (1.0 - p)) + float(model["intent_logit_bias"])
+        intent_prob = float(1.0 / (1.0 + np.exp(-logit)))
     intent_prob = float(np.clip(np.nan_to_num(intent_prob, nan=0.5), 1e-6, 1.0 - 1e-6))
 
     _, _, w_last, h_last, centers = _constant_velocity_centers(request)
@@ -193,6 +197,9 @@ def predict(request: dict) -> dict:
         if "traj" in model:
             dx = float(model["traj"][f"{key}_dx"].predict(feats)[0])
             dy = float(model["traj"][f"{key}_dy"].predict(feats)[0])
+            alpha = float(model.get("trajectory_alpha", {}).get(key, 1.0))
+            dx *= alpha
+            dy *= alpha
             nx += np.nan_to_num(dx, nan=0.0, posinf=0.0, neginf=0.0)
             ny += np.nan_to_num(dy, nan=0.0, posinf=0.0, neginf=0.0)
         out[key] = [

@@ -25,6 +25,13 @@ from predict import HORIZON_KEYS, _constant_velocity_centers, _engineered_featur
 
 DATA = Path(__file__).parent / "data"
 MODEL_PATH = Path(__file__).parent / "model.pkl"
+INTENT_LOGIT_BIAS = -0.05
+TRAJECTORY_ALPHA = {
+    "bbox_500ms": 1.0,
+    "bbox_1000ms": 1.0,
+    "bbox_1500ms": 0.95,
+    "bbox_2000ms": 0.925,
+}
 
 REQUEST_FIELDS = [
     "ped_id", "frame_w", "frame_h",
@@ -78,6 +85,7 @@ def make_pred_frame(
     intent: np.ndarray,
     cv: dict[str, np.ndarray],
     residuals: dict[str, np.ndarray] | None = None,
+    trajectory_alpha: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     rows = []
     for i, row in df.reset_index(drop=True).iterrows():
@@ -88,8 +96,9 @@ def make_pred_frame(
         for key in HORIZON_KEYS:
             cx, cy = cv[key][i]
             if residuals is not None:
-                cx += residuals[f"{key}_dx"][i]
-                cy += residuals[f"{key}_dy"][i]
+                alpha = 1.0 if trajectory_alpha is None else trajectory_alpha.get(key, 1.0)
+                cx += residuals[f"{key}_dx"][i] * alpha
+                cy += residuals[f"{key}_dy"][i] * alpha
             flat.extend([cx - w * 0.5, cy - h * 0.5, cx + w * 0.5, cy + h * 0.5])
         rows.append(flat)
     return pd.DataFrame(
@@ -175,10 +184,17 @@ def main() -> None:
     t0 = time.time()
     intent = train_intent(X_train_intent, y_train, X_dev_intent, y_dev)
     dev_probs = intent.predict_proba(X_dev_intent)[:, 1]
+    dev_probs_biased = np.clip(dev_probs, 1e-6, 1.0 - 1e-6)
+    logits = np.log(dev_probs_biased / (1.0 - dev_probs_biased)) + INTENT_LOGIT_BIAS
+    dev_probs_biased = 1.0 / (1.0 + np.exp(-logits))
     ll = log_loss(y_dev, np.clip(dev_probs, 1e-6, 1 - 1e-6))
+    ll_biased = log_loss(y_dev, np.clip(dev_probs_biased, 1e-6, 1 - 1e-6))
     prior_ll = log_loss(y_dev, np.full_like(dev_probs, y_train.mean(), dtype=np.float64))
     print(f"  {time.time() - t0:.1f}s")
-    print(f"  Dev log-loss: {ll:.4f}  (class-prior {prior_ll:.4f}, term {ll / BCE_FLOOR:.3f})")
+    print(
+        f"  Dev log-loss: {ll:.4f}; biased {ll_biased:.4f}  "
+        f"(class-prior {prior_ll:.4f}, term {ll_biased / BCE_FLOOR:.3f})"
+    )
 
     print("\nTraining trajectory residual regressors...")
     t0 = time.time()
@@ -186,7 +202,7 @@ def main() -> None:
     dev_cv = cv_centers(dev)
     print(f"  {time.time() - t0:.1f}s")
 
-    preds = make_pred_frame(dev, dev_probs, dev_cv, dev_residuals)
+    preds = make_pred_frame(dev, dev_probs_biased, dev_cv, dev_residuals, TRAJECTORY_ALPHA)
     s = score(preds, dev)
     print(
         "\nFull Dev score: "
@@ -197,14 +213,24 @@ def main() -> None:
 
     for key in HORIZON_KEYS:
         truth = centers_from_bbox_col(dev, key)
-        pred = dev_cv[key] + np.column_stack([dev_residuals[f"{key}_dx"], dev_residuals[f"{key}_dy"]])
+        alpha = TRAJECTORY_ALPHA[key]
+        pred = dev_cv[key] + alpha * np.column_stack([dev_residuals[f"{key}_dx"], dev_residuals[f"{key}_dy"]])
         ade = float(np.hypot(pred[:, 0] - truth[:, 0], pred[:, 1] - truth[:, 1]).mean())
         cv_ade = float(np.hypot(dev_cv[key][:, 0] - truth[:, 0], dev_cv[key][:, 1] - truth[:, 1]).mean())
         print(f"  {key}: learned ADE {ade:.1f} px  vs CV {cv_ade:.1f} px")
 
     print(f"\nSaving model -> {MODEL_PATH}")
     with open(MODEL_PATH, "wb") as f:
-        pickle.dump({"intent": intent, "traj": traj}, f, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(
+            {
+                "intent": intent,
+                "traj": traj,
+                "intent_logit_bias": INTENT_LOGIT_BIAS,
+                "trajectory_alpha": TRAJECTORY_ALPHA,
+            },
+            f,
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
 
 
 if __name__ == "__main__":
